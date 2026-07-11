@@ -1840,19 +1840,9 @@ export function StudentEnrollment() {
   const hydrated = useHydrated();
   const queryClient = useQueryClient();
   const { state } = useExamBatchFlow();
-  const { enrollment, canAccessDashboard } = useExamBatchAccess();
+  // Redirects handled by layout guard — see StudentHome note.
 
-  // If they've already progressed, don't let them re-submit.
-  useEffect(() => {
-    if (!hydrated) return;
-    if (canAccessDashboard) {
-      navigate({ to: "/exam-batch/dashboard" as never });
-      return;
-    }
-    if (enrollment && enrollment.status === "pending") {
-      navigate({ to: "/exam-batch/pending" as never });
-    }
-  }, [hydrated, canAccessDashboard, enrollment, navigate]);
+
 
   const sessionsQuery = useQuery({
     queryKey: ["exam-batch", "student", "sessions"],
