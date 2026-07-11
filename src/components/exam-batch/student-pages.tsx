@@ -187,12 +187,14 @@ const subjectIconMap: Record<string, LucideIcon> = {
 };
 
 // -------- Home --------
+// NOTE: All redirect logic lives in the parent layout route
+// `src/routes/_student.exam-batch.tsx`. Do NOT add a `useEffect` that
+// navigates based on enrollment status here — it will race the layout
+// guard and cause the flicker this file was written to avoid.
 export function StudentHome() {
   const navigate = useNavigate();
-  const hydrated = useHydrated();
   const { setSession } = useExamBatchFlow();
-  const { enrollment, canAccessDashboard, isLoading: accessLoading } =
-    useExamBatchAccess();
+  const { enrollment } = useExamBatchAccess();
 
   const sessionsQuery = useQuery({
     queryKey: ["exam-batch", "student", "sessions"],
@@ -201,18 +203,6 @@ export function StudentHome() {
   });
 
   const sessions = sessionsQuery.data ?? [];
-
-  // If the backend already knows the student, route them to the right screen.
-  useEffect(() => {
-    if (!hydrated || accessLoading) return;
-    if (canAccessDashboard) {
-      navigate({ to: "/exam-batch/dashboard" as never });
-      return;
-    }
-    if (enrollment && enrollment.status === "pending") {
-      navigate({ to: "/exam-batch/pending" as never });
-    }
-  }, [hydrated, accessLoading, canAccessDashboard, enrollment, navigate]);
 
   const pickSession = (id: string) => {
     setSession(id);
@@ -1576,22 +1566,11 @@ export function StudentLeaderboardPdfPreview() {
   );
 }
 // -------- Sessions (student) --------
+// Redirects handled by layout guard — see StudentHome note.
 export function StudentSessions() {
   const navigate = useNavigate();
-  const hydrated = useHydrated();
   const { setSession } = useExamBatchFlow();
-  const { enrollment, canAccessDashboard, isLoading: accessLoading } =
-    useExamBatchAccess();
-  useEffect(() => {
-    if (!hydrated || accessLoading) return;
-    if (canAccessDashboard) {
-      navigate({ to: "/exam-batch/dashboard" as never, replace: true });
-      return;
-    }
-    if (enrollment && enrollment.status === "pending") {
-      navigate({ to: "/exam-batch/pending" as never, replace: true });
-    }
-  }, [hydrated, accessLoading, canAccessDashboard, enrollment, navigate]);
+  const { enrollment } = useExamBatchAccess();
   const sessionsQuery = useQuery({
     queryKey: ["exam-batch", "student", "sessions"],
     queryFn: () => listAvailableExamBatchSessions({ data: {} }),
@@ -1680,23 +1659,11 @@ export function StudentSessions() {
 
 
 // -------- Subject selection --------
+// Redirects handled by layout guard — see StudentHome note.
 export function StudentSubjects() {
   const navigate = useNavigate();
   const hydrated = useHydrated();
   const { state, setSubjects } = useExamBatchFlow();
-  const { enrollment, canAccessDashboard } = useExamBatchAccess();
-
-  // If the user is already approved/pending, don't let them re-pick subjects.
-  useEffect(() => {
-    if (!hydrated) return;
-    if (canAccessDashboard) {
-      navigate({ to: "/exam-batch/dashboard" as never });
-      return;
-    }
-    if (enrollment && enrollment.status === "pending") {
-      navigate({ to: "/exam-batch/pending" as never });
-    }
-  }, [hydrated, canAccessDashboard, enrollment, navigate]);
 
   const sessionsQuery = useQuery({
     queryKey: ["exam-batch", "student", "sessions"],
