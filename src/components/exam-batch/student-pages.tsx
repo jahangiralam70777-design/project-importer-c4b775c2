@@ -2471,36 +2471,25 @@ const dashNotifications = [
 ];
 
 export function StudentDashboard() {
-  const navigate = useNavigate();
-  const hydrated = useHydrated();
-  const { state } = useExamBatchFlow();
+  // Reads from the SSOT hook — no local access query, no local redirect.
+  // The layout guard at `_student.exam-batch.tsx` handles the "not
+  // approved → /pending" case, so we never see this component render
+  // without approval.
+  const {
+    session: currentSession,
+    sessionId,
+    canAccessDashboard,
+    studentId: studentIdValue,
+    isLoading: accessLoading,
+    isError: accessError,
+  } = useExamBatchAccess();
 
-  const sessionsQuery = useQuery({
-    queryKey: ["exam-batch", "student", "sessions"],
-    queryFn: () => listAvailableExamBatchSessions({ data: {} }),
-  });
-
-  const sessions = sessionsQuery.data ?? [];
-  const currentSession = useMemo(() => {
-    if (!sessions.length) return null;
-    if (state.sessionId) {
-      const match = sessions.find((s) => s.id === state.sessionId);
-      if (match) return match;
-    }
-    return sessions.find((s) => s.status === "active") ?? sessions[0];
-  }, [sessions, state.sessionId]);
-  const sessionId = currentSession?.id ?? null;
-
-  const accessQuery = useQuery({
-    queryKey: ["exam-batch", "student", "access", sessionId],
-    queryFn: () => getExamBatchAccess({ data: { sessionId: sessionId as string } }),
-    enabled: !!sessionId,
-  });
+  const sessionsIsLoading = accessLoading;
 
   const examsQuery = useQuery({
     queryKey: ["exam-batch", "student", "exams", sessionId],
     queryFn: () => listExamBatchExamsForSession({ data: { sessionId: sessionId as string } }),
-    enabled: !!sessionId && (accessQuery.data?.canAccessDashboard ?? false),
+    enabled: !!sessionId && canAccessDashboard,
   });
 
   const publicSettingsQuery = useQuery({
@@ -2525,20 +2514,10 @@ export function StudentDashboard() {
     (e) => e.availability === "announced" || e.availability === "upcoming",
   ).length;
 
-  const serverGate = accessQuery.data?.canAccessDashboard;
-  useEffect(() => {
-    if (!hydrated) return;
-    if (accessQuery.isSuccess && !serverGate) {
-      navigate({ to: "/exam-batch/pending" as never });
-    }
-  }, [hydrated, serverGate, accessQuery.isSuccess, navigate]);
-  if (hydrated && accessQuery.isSuccess && !serverGate) return null;
-
-  const studentIdValue = accessQuery.data?.studentId;
   const studentIdDisplay =
-    typeof studentIdValue === "number" ? String(studentIdValue) : accessQuery.isLoading ? "…" : "—";
-  const sessionTitle = currentSession?.title ?? (sessionsQuery.isLoading ? "Loading…" : "—");
-  const sessionLevel = currentSession?.level ?? (sessionsQuery.isLoading ? "…" : "—");
+    typeof studentIdValue === "number" ? String(studentIdValue) : accessLoading ? "…" : "—";
+  const sessionTitle = currentSession?.title ?? (sessionsIsLoading ? "Loading…" : "—");
+  const sessionLevel = currentSession?.level ?? (sessionsIsLoading ? "…" : "—");
   const availableDisplay = !sessionId
     ? "—"
     : examsQuery.isLoading
