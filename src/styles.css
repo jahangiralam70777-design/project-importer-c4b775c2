@@ -348,3 +348,32 @@ body.inspector-mode-on [role="button"] {
   outline-offset: 2px;
   position: relative;
 }
+
+/* Exam Batch sub-nav — always-visible horizontal scrollbar. */
+.exam-batch-subnav {
+  overflow-x: auto;
+  overflow-y: hidden;
+  white-space: nowrap;
+  scrollbar-width: thin;
+  scrollbar-color: oklch(0.554 0.046 257.417 / 0.55) transparent;
+}
+.exam-batch-subnav::-webkit-scrollbar {
+  height: 8px;
+  -webkit-appearance: none;
+  display: block;
+}
+.exam-batch-subnav::-webkit-scrollbar-track {
+  background: transparent;
+  border-radius: 9999px;
+}
+.exam-batch-subnav::-webkit-scrollbar-thumb {
+  background-color: oklch(0.554 0.046 257.417 / 0.5);
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  min-width: 40px;
+}
+.exam-batch-subnav::-webkit-scrollbar-thumb:hover {
+  background-color: oklch(0.554 0.046 257.417 / 0.8);
+  background-clip: padding-box;
+}
