@@ -2587,7 +2587,7 @@ export function StudentDashboard() {
         />
       </section>
 
-      {sessionsQuery.isError || accessQuery.isError || examsQuery.isError ? (
+      {accessError || examsQuery.isError ? (
         <div className="mt-6">
           <EmptyState
             icon={ListChecks}
