@@ -2045,67 +2045,25 @@ export function StudentEnrollment() {
 
 
 // -------- Pending approval --------
+// Reads ONLY from the SSOT hook. Approval flips arrive via Supabase
+// Realtime → the layout guard redirects to /dashboard on the same tick.
+// There is no local polling, no local invalidation, no local redirect.
 export function StudentPending() {
   const navigate = useNavigate();
   const hydrated = useHydrated();
-  const queryClient = useQueryClient();
   const { state, reset } = useExamBatchFlow();
   const {
     sessionId: resolvedSessionId,
     session: resolvedSession,
     enrollment,
     enrollmentStatus,
-    canAccessDashboard,
     isLoading: accessLoading,
   } = useExamBatchAccess();
 
   const activeSessionId = enrollment?.session_id ?? state.sessionId ?? resolvedSessionId;
-
-  const sessionsQuery = useQuery({
-    queryKey: ["exam-batch", "student", "sessions"],
-    queryFn: () => listAvailableExamBatchSessions({ data: {} }),
-    staleTime: 30_000,
-  });
-  const session = useMemo(
-    () =>
-      sessionsQuery.data?.find((s) => s.id === activeSessionId) ??
-      resolvedSession ??
-      null,
-    [sessionsQuery.data, activeSessionId, resolvedSession],
-  );
-
-  const enrollmentQuery = useQuery({
-    queryKey: ["exam-batch", "student", "my-enrollment", activeSessionId],
-    queryFn: () =>
-      getMyExamBatchEnrollment({ data: { sessionId: activeSessionId as string } }),
-    enabled: !!activeSessionId,
-    staleTime: 2_000,
-    // Poll aggressively while pending; stop once we hit a terminal status.
-    refetchInterval: (query) => {
-      const s = (query.state.data as { status?: string } | undefined)?.status;
-      if (s === "approved" || s === "rejected") return false;
-      return 4_000;
-    },
-    refetchIntervalInBackground: true,
-  });
-  const effectiveEnrollment = enrollmentQuery.data ?? enrollment ?? null;
-  const status = effectiveEnrollment?.status ?? enrollmentStatus ?? null;
-
-  // Also keep the access gate + enrollments list fresh so navigation
-  // guards see the approval flip on the same tick.
-  useEffect(() => {
-    if (status !== "approved") return;
-    void queryClient.invalidateQueries({ queryKey: ["exam-batch", "student", "access"] });
-    void queryClient.invalidateQueries({ queryKey: ["exam-batch", "student", "my-enrollments"] });
-  }, [status, queryClient]);
-
-  useEffect(() => {
-    if (!hydrated) return;
-    if (canAccessDashboard || status === "approved") {
-      navigate({ to: "/exam-batch/dashboard" as never });
-    }
-  }, [hydrated, canAccessDashboard, status, navigate]);
-
+  const session = resolvedSession;
+  const effectiveEnrollment = enrollment;
+  const status = enrollmentStatus;
 
   if (hydrated && !accessLoading && !activeSessionId) {
     return (
@@ -2129,7 +2087,7 @@ export function StudentPending() {
     );
   }
 
-  if (hydrated && !accessLoading && activeSessionId && !effectiveEnrollment && !enrollmentQuery.isLoading) {
+  if (hydrated && !accessLoading && activeSessionId && !effectiveEnrollment) {
     return (
       <>
         <PageHeader
@@ -2185,6 +2143,7 @@ export function StudentPending() {
     status={status}
   />;
 }
+
 
 function StudentPendingView({
   session,
