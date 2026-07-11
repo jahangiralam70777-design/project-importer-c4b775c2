@@ -10,8 +10,21 @@ export type SubNavItem = { title: string; to: string; icon: LucideIcon };
 export function ExamBatchSubNav({ items }: { items: SubNavItem[] }) {
   const currentPath = useRouterState({ select: (s) => s.location.pathname });
   const norm = (p: string) => p.replace(/\/+$/, "");
+  // Horizontal-only scroll, whitespace-nowrap, always-visible thin scrollbar.
+  // Shift+wheel, touch swipe, trackpad and scrollbar dragging all work
+  // because the container is a native scroll container with the browser's
+  // default horizontal-scroll behaviour on `overflow-x: auto`.
   return (
-    <div className="glass shadow-card-soft sticky top-2 z-20 flex items-center gap-1 overflow-x-auto rounded-2xl p-1.5 backdrop-saturate-150 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+    <div
+      className="exam-batch-subnav glass shadow-card-soft sticky top-2 z-20 flex flex-nowrap items-center gap-1 whitespace-nowrap rounded-2xl p-1.5 backdrop-saturate-150"
+      style={{
+        overflowX: "auto",
+        overflowY: "hidden",
+        WebkitOverflowScrolling: "touch",
+        scrollbarGutter: "stable",
+        scrollbarWidth: "thin",
+      }}
+    >
       {items.map((it) => {
         const active = norm(currentPath) === norm(it.to);
         return (
