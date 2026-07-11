@@ -8,9 +8,7 @@ import {
 import { useExamBatchVisibility } from "@/hooks/use-exam-batch-visibility";
 import { useHydrated } from "@/hooks/use-hydrated";
 
-// Paths that only make sense BEFORE a student is approved. Once the backend
-// flips their enrollment to `approved`, they must never see any of these
-// pages again — instantly bounce them to the dashboard.
+// Paths that only make sense BEFORE approval.
 const PRE_APPROVAL_PATHS = new Set<string>([
   "/exam-batch",
   "/exam-batch/",
@@ -20,39 +18,85 @@ const PRE_APPROVAL_PATHS = new Set<string>([
   "/exam-batch/pending",
 ]);
 
+// Paths that require approval to reach.
+const POST_APPROVAL_PREFIXES = [
+  "/exam-batch/dashboard",
+  "/exam-batch/available",
+  "/exam-batch/upcoming",
+  "/exam-batch/leaderboard",
+  "/exam-batch/progress",
+  "/exam-batch/history",
+];
+
+function normalize(p: string) {
+  const n = p.replace(/\/+$/, "");
+  return n === "" ? "/" : n;
+}
+
 function StudentExamBatchLayout() {
   const nav = useExamBatchStudentNav();
   const navigate = useNavigate();
   const hydrated = useHydrated();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const { moduleVisible, isLoading: visibilityLoading } = useExamBatchVisibility();
-  const { canAccessDashboard, isLoading: accessLoading } = useExamBatchAccess();
+  const {
+    canAccessDashboard,
+    enrollment,
+    enrollmentStatus,
+    isLoading: accessLoading,
+  } = useExamBatchAccess();
 
-  // Admin toggled the module off — bounce every student off Exam Batch
-  // immediately, without any page refresh. Realtime keeps `moduleVisible`
-  // fresh via the shared subscription.
+  // SINGLE ROUTE GUARD for the entire student exam-batch module.
+  // No child page runs its own redirect useEffect — this is the only one.
   useEffect(() => {
+    if (!hydrated) return;
     if (visibilityLoading) return;
-    if (!moduleVisible) navigate({ to: "/dashboard" as never, replace: true });
-  }, [moduleVisible, visibilityLoading, navigate]);
 
-  // Once the student is approved, the enrollment flow (sessions / subjects /
-  // verification / pending) must never render again. Realtime invalidates
-  // `student.access`, so admin approval flips `canAccessDashboard` to true
-  // and this effect immediately redirects — no manual refresh.
-  useEffect(() => {
-    if (!hydrated || accessLoading || visibilityLoading || !moduleVisible) return;
-    if (!canAccessDashboard) return;
-    const norm = pathname.replace(/\/+$/, "") || "/exam-batch";
-    if (PRE_APPROVAL_PATHS.has(norm) || PRE_APPROVAL_PATHS.has(pathname)) {
-      navigate({ to: "/exam-batch/dashboard" as never, replace: true });
+    // Module toggled off by admin → leave exam-batch entirely.
+    if (!moduleVisible) {
+      navigate({ to: "/dashboard" as never, replace: true });
+      return;
+    }
+
+    // Don't move anyone while the SSOT is still fetching for the first
+    // time — but background refetches (Realtime) keep isLoading = false,
+    // so approval flips propagate instantly.
+    if (accessLoading) return;
+
+    const here = normalize(pathname);
+
+    // 1) APPROVED — always on the dashboard, never bounce back.
+    if (canAccessDashboard) {
+      if (PRE_APPROVAL_PATHS.has(here) || PRE_APPROVAL_PATHS.has(pathname)) {
+        navigate({ to: "/exam-batch/dashboard" as never, replace: true });
+      }
+      return;
+    }
+
+    // 2) PENDING or REJECTED — pin to /pending, never let them wander into
+    //    the post-approval area.
+    if (enrollment && (enrollmentStatus === "pending" || enrollmentStatus === "rejected")) {
+      const inPostArea = POST_APPROVAL_PREFIXES.some((p) => here.startsWith(p));
+      if (inPostArea || here === "/exam-batch/subjects" || here === "/exam-batch/enrollment") {
+        navigate({ to: "/exam-batch/pending" as never, replace: true });
+      }
+      return;
+    }
+
+    // 3) NO ENROLLMENT — block post-approval and /pending, allow the
+    //    enrollment flow itself (sessions/subjects/enrollment/index).
+    const inPostArea = POST_APPROVAL_PREFIXES.some((p) => here.startsWith(p));
+    if (inPostArea || here === "/exam-batch/pending") {
+      navigate({ to: "/exam-batch/sessions" as never, replace: true });
     }
   }, [
     hydrated,
-    accessLoading,
     visibilityLoading,
+    accessLoading,
     moduleVisible,
     canAccessDashboard,
+    enrollment,
+    enrollmentStatus,
     pathname,
     navigate,
   ]);

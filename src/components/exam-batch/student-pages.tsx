@@ -187,12 +187,14 @@ const subjectIconMap: Record<string, LucideIcon> = {
 };
 
 // -------- Home --------
+// NOTE: All redirect logic lives in the parent layout route
+// `src/routes/_student.exam-batch.tsx`. Do NOT add a `useEffect` that
+// navigates based on enrollment status here — it will race the layout
+// guard and cause the flicker this file was written to avoid.
 export function StudentHome() {
   const navigate = useNavigate();
-  const hydrated = useHydrated();
   const { setSession } = useExamBatchFlow();
-  const { enrollment, canAccessDashboard, isLoading: accessLoading } =
-    useExamBatchAccess();
+  const { enrollment } = useExamBatchAccess();
 
   const sessionsQuery = useQuery({
     queryKey: ["exam-batch", "student", "sessions"],
@@ -201,18 +203,6 @@ export function StudentHome() {
   });
 
   const sessions = sessionsQuery.data ?? [];
-
-  // If the backend already knows the student, route them to the right screen.
-  useEffect(() => {
-    if (!hydrated || accessLoading) return;
-    if (canAccessDashboard) {
-      navigate({ to: "/exam-batch/dashboard" as never });
-      return;
-    }
-    if (enrollment && enrollment.status === "pending") {
-      navigate({ to: "/exam-batch/pending" as never });
-    }
-  }, [hydrated, accessLoading, canAccessDashboard, enrollment, navigate]);
 
   const pickSession = (id: string) => {
     setSession(id);
@@ -1576,22 +1566,11 @@ export function StudentLeaderboardPdfPreview() {
   );
 }
 // -------- Sessions (student) --------
+// Redirects handled by layout guard — see StudentHome note.
 export function StudentSessions() {
   const navigate = useNavigate();
-  const hydrated = useHydrated();
   const { setSession } = useExamBatchFlow();
-  const { enrollment, canAccessDashboard, isLoading: accessLoading } =
-    useExamBatchAccess();
-  useEffect(() => {
-    if (!hydrated || accessLoading) return;
-    if (canAccessDashboard) {
-      navigate({ to: "/exam-batch/dashboard" as never, replace: true });
-      return;
-    }
-    if (enrollment && enrollment.status === "pending") {
-      navigate({ to: "/exam-batch/pending" as never, replace: true });
-    }
-  }, [hydrated, accessLoading, canAccessDashboard, enrollment, navigate]);
+  const { enrollment } = useExamBatchAccess();
   const sessionsQuery = useQuery({
     queryKey: ["exam-batch", "student", "sessions"],
     queryFn: () => listAvailableExamBatchSessions({ data: {} }),
@@ -1680,23 +1659,11 @@ export function StudentSessions() {
 
 
 // -------- Subject selection --------
+// Redirects handled by layout guard — see StudentHome note.
 export function StudentSubjects() {
   const navigate = useNavigate();
   const hydrated = useHydrated();
   const { state, setSubjects } = useExamBatchFlow();
-  const { enrollment, canAccessDashboard } = useExamBatchAccess();
-
-  // If the user is already approved/pending, don't let them re-pick subjects.
-  useEffect(() => {
-    if (!hydrated) return;
-    if (canAccessDashboard) {
-      navigate({ to: "/exam-batch/dashboard" as never });
-      return;
-    }
-    if (enrollment && enrollment.status === "pending") {
-      navigate({ to: "/exam-batch/pending" as never });
-    }
-  }, [hydrated, canAccessDashboard, enrollment, navigate]);
 
   const sessionsQuery = useQuery({
     queryKey: ["exam-batch", "student", "sessions"],
@@ -1873,19 +1840,9 @@ export function StudentEnrollment() {
   const hydrated = useHydrated();
   const queryClient = useQueryClient();
   const { state } = useExamBatchFlow();
-  const { enrollment, canAccessDashboard } = useExamBatchAccess();
+  // Redirects handled by layout guard — see StudentHome note.
 
-  // If they've already progressed, don't let them re-submit.
-  useEffect(() => {
-    if (!hydrated) return;
-    if (canAccessDashboard) {
-      navigate({ to: "/exam-batch/dashboard" as never });
-      return;
-    }
-    if (enrollment && enrollment.status === "pending") {
-      navigate({ to: "/exam-batch/pending" as never });
-    }
-  }, [hydrated, canAccessDashboard, enrollment, navigate]);
+
 
   const sessionsQuery = useQuery({
     queryKey: ["exam-batch", "student", "sessions"],
@@ -2088,67 +2045,25 @@ export function StudentEnrollment() {
 
 
 // -------- Pending approval --------
+// Reads ONLY from the SSOT hook. Approval flips arrive via Supabase
+// Realtime → the layout guard redirects to /dashboard on the same tick.
+// There is no local polling, no local invalidation, no local redirect.
 export function StudentPending() {
   const navigate = useNavigate();
   const hydrated = useHydrated();
-  const queryClient = useQueryClient();
   const { state, reset } = useExamBatchFlow();
   const {
     sessionId: resolvedSessionId,
     session: resolvedSession,
     enrollment,
     enrollmentStatus,
-    canAccessDashboard,
     isLoading: accessLoading,
   } = useExamBatchAccess();
 
   const activeSessionId = enrollment?.session_id ?? state.sessionId ?? resolvedSessionId;
-
-  const sessionsQuery = useQuery({
-    queryKey: ["exam-batch", "student", "sessions"],
-    queryFn: () => listAvailableExamBatchSessions({ data: {} }),
-    staleTime: 30_000,
-  });
-  const session = useMemo(
-    () =>
-      sessionsQuery.data?.find((s) => s.id === activeSessionId) ??
-      resolvedSession ??
-      null,
-    [sessionsQuery.data, activeSessionId, resolvedSession],
-  );
-
-  const enrollmentQuery = useQuery({
-    queryKey: ["exam-batch", "student", "my-enrollment", activeSessionId],
-    queryFn: () =>
-      getMyExamBatchEnrollment({ data: { sessionId: activeSessionId as string } }),
-    enabled: !!activeSessionId,
-    staleTime: 2_000,
-    // Poll aggressively while pending; stop once we hit a terminal status.
-    refetchInterval: (query) => {
-      const s = (query.state.data as { status?: string } | undefined)?.status;
-      if (s === "approved" || s === "rejected") return false;
-      return 4_000;
-    },
-    refetchIntervalInBackground: true,
-  });
-  const effectiveEnrollment = enrollmentQuery.data ?? enrollment ?? null;
-  const status = effectiveEnrollment?.status ?? enrollmentStatus ?? null;
-
-  // Also keep the access gate + enrollments list fresh so navigation
-  // guards see the approval flip on the same tick.
-  useEffect(() => {
-    if (status !== "approved") return;
-    void queryClient.invalidateQueries({ queryKey: ["exam-batch", "student", "access"] });
-    void queryClient.invalidateQueries({ queryKey: ["exam-batch", "student", "my-enrollments"] });
-  }, [status, queryClient]);
-
-  useEffect(() => {
-    if (!hydrated) return;
-    if (canAccessDashboard || status === "approved") {
-      navigate({ to: "/exam-batch/dashboard" as never });
-    }
-  }, [hydrated, canAccessDashboard, status, navigate]);
-
+  const session = resolvedSession;
+  const effectiveEnrollment = enrollment;
+  const status = enrollmentStatus;
 
   if (hydrated && !accessLoading && !activeSessionId) {
     return (
@@ -2172,7 +2087,7 @@ export function StudentPending() {
     );
   }
 
-  if (hydrated && !accessLoading && activeSessionId && !effectiveEnrollment && !enrollmentQuery.isLoading) {
+  if (hydrated && !accessLoading && activeSessionId && !effectiveEnrollment) {
     return (
       <>
         <PageHeader
@@ -2228,6 +2143,7 @@ export function StudentPending() {
     status={status}
   />;
 }
+
 
 function StudentPendingView({
   session,
@@ -2555,36 +2471,25 @@ const dashNotifications = [
 ];
 
 export function StudentDashboard() {
-  const navigate = useNavigate();
-  const hydrated = useHydrated();
-  const { state } = useExamBatchFlow();
+  // Reads from the SSOT hook — no local access query, no local redirect.
+  // The layout guard at `_student.exam-batch.tsx` handles the "not
+  // approved → /pending" case, so we never see this component render
+  // without approval.
+  const {
+    session: currentSession,
+    sessionId,
+    canAccessDashboard,
+    studentId: studentIdValue,
+    isLoading: accessLoading,
+    isError: accessError,
+  } = useExamBatchAccess();
 
-  const sessionsQuery = useQuery({
-    queryKey: ["exam-batch", "student", "sessions"],
-    queryFn: () => listAvailableExamBatchSessions({ data: {} }),
-  });
-
-  const sessions = sessionsQuery.data ?? [];
-  const currentSession = useMemo(() => {
-    if (!sessions.length) return null;
-    if (state.sessionId) {
-      const match = sessions.find((s) => s.id === state.sessionId);
-      if (match) return match;
-    }
-    return sessions.find((s) => s.status === "active") ?? sessions[0];
-  }, [sessions, state.sessionId]);
-  const sessionId = currentSession?.id ?? null;
-
-  const accessQuery = useQuery({
-    queryKey: ["exam-batch", "student", "access", sessionId],
-    queryFn: () => getExamBatchAccess({ data: { sessionId: sessionId as string } }),
-    enabled: !!sessionId,
-  });
+  const sessionsIsLoading = accessLoading;
 
   const examsQuery = useQuery({
     queryKey: ["exam-batch", "student", "exams", sessionId],
     queryFn: () => listExamBatchExamsForSession({ data: { sessionId: sessionId as string } }),
-    enabled: !!sessionId && (accessQuery.data?.canAccessDashboard ?? false),
+    enabled: !!sessionId && canAccessDashboard,
   });
 
   const publicSettingsQuery = useQuery({
@@ -2609,20 +2514,10 @@ export function StudentDashboard() {
     (e) => e.availability === "announced" || e.availability === "upcoming",
   ).length;
 
-  const serverGate = accessQuery.data?.canAccessDashboard;
-  useEffect(() => {
-    if (!hydrated) return;
-    if (accessQuery.isSuccess && !serverGate) {
-      navigate({ to: "/exam-batch/pending" as never });
-    }
-  }, [hydrated, serverGate, accessQuery.isSuccess, navigate]);
-  if (hydrated && accessQuery.isSuccess && !serverGate) return null;
-
-  const studentIdValue = accessQuery.data?.studentId;
   const studentIdDisplay =
-    typeof studentIdValue === "number" ? String(studentIdValue) : accessQuery.isLoading ? "…" : "—";
-  const sessionTitle = currentSession?.title ?? (sessionsQuery.isLoading ? "Loading…" : "—");
-  const sessionLevel = currentSession?.level ?? (sessionsQuery.isLoading ? "…" : "—");
+    typeof studentIdValue === "number" ? String(studentIdValue) : accessLoading ? "…" : "—";
+  const sessionTitle = currentSession?.title ?? (sessionsIsLoading ? "Loading…" : "—");
+  const sessionLevel = currentSession?.level ?? (sessionsIsLoading ? "…" : "—");
   const availableDisplay = !sessionId
     ? "—"
     : examsQuery.isLoading
@@ -2692,7 +2587,7 @@ export function StudentDashboard() {
         />
       </section>
 
-      {sessionsQuery.isError || accessQuery.isError || examsQuery.isError ? (
+      {accessError || examsQuery.isError ? (
         <div className="mt-6">
           <EmptyState
             icon={ListChecks}

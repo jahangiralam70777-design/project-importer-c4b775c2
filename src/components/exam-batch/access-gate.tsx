@@ -1,6 +1,5 @@
-import { useEffect, useMemo } from "react";
-import { useNavigate } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
+import { useMemo } from "react";
+import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import {
   Home,
   LayoutDashboard,
@@ -16,23 +15,22 @@ import {
   listMyExamBatchEnrollments,
 } from "@/lib/exam-batch/student-enrollment.functions";
 import { useExamBatchFlow } from "./flow-store";
-import { useHydrated } from "@/hooks/use-hydrated";
 import { useExamBatchVisibility } from "@/hooks/use-exam-batch-visibility";
 import type { SubNavItem } from "./kit";
 import type { ExamBatchEnrollmentRow } from "@/lib/exam-batch/types";
 
 /**
- * Resolve the student's current exam-batch session + backend access.
+ * SINGLE SOURCE OF TRUTH for the student's exam-batch enrollment state.
  *
- * Session preference order (backend-driven):
- *   1. An `approved` enrollment (student is in an active batch).
- *   2. A `pending` enrollment (verification in progress).
- *   3. The session cached in `flow-store` (localStorage).
- *   4. The first `active` session from the public list.
- *   5. Whatever comes back first from the public list.
+ * Every student-facing exam-batch component reads from this hook — never
+ * from a duplicate `useQuery` on the same keys. The layout mounts it once,
+ * so `refetchType: "active"` invalidations from Supabase Realtime cause
+ * exactly one refetch (not one per page/component).
  *
- * This means even if the browser cache is wiped, the student always lands
- * on the session that actually reflects their current backend state.
+ * `placeholderData: keepPreviousData` means when Realtime invalidates the
+ * queries after an admin approval, the current page keeps rendering with
+ * the previous data while the new data streams in. No flicker, no blank
+ * screen, no unmount.
  */
 export function useExamBatchAccess() {
   const { state } = useExamBatchFlow();
@@ -41,11 +39,13 @@ export function useExamBatchAccess() {
     queryKey: ["exam-batch", "student", "sessions"],
     queryFn: () => listAvailableExamBatchSessions({ data: {} }),
     staleTime: 30_000,
+    placeholderData: keepPreviousData,
   });
   const enrollmentsQuery = useQuery({
     queryKey: ["exam-batch", "student", "my-enrollments"],
     queryFn: () => listMyExamBatchEnrollments({ data: {} }),
-    staleTime: 30_000,
+    staleTime: 15_000,
+    placeholderData: keepPreviousData,
   });
 
   const sessions = sessionsQuery.data ?? [];
@@ -69,9 +69,7 @@ export function useExamBatchAccess() {
       const match = sessions.find((s) => s.id === state.sessionId);
       if (match) return match;
     }
-    return (
-      sessions.find((s) => s.status === "active") ?? sessions[0] ?? null
-    );
+    return sessions.find((s) => s.status === "active") ?? sessions[0] ?? null;
   }, [sessions, currentEnrollment, state.sessionId]);
 
   const sessionId = current?.id ?? null;
@@ -81,11 +79,21 @@ export function useExamBatchAccess() {
     queryFn: () => getExamBatchAccess({ data: { sessionId: sessionId as string } }),
     enabled: !!sessionId,
     staleTime: 15_000,
+    placeholderData: keepPreviousData,
   });
 
   const canAccessDashboard = accessQuery.data?.canAccessDashboard ?? false;
   const studentId = accessQuery.data?.studentId ?? null;
-  const enrollmentStatus = accessQuery.data?.status ?? currentEnrollment?.status ?? null;
+  const enrollmentStatus =
+    accessQuery.data?.status ?? currentEnrollment?.status ?? null;
+
+  // Only report `isLoading` on the very first fetch. Background refetches
+  // triggered by Realtime must NOT flip loading → true, or every child
+  // page will flash a spinner mid-approval.
+  const isLoading =
+    (sessionsQuery.isLoading && !sessionsQuery.data) ||
+    (enrollmentsQuery.isLoading && !enrollmentsQuery.data) ||
+    (!!sessionId && accessQuery.isLoading && !accessQuery.data);
 
   return {
     sessionId,
@@ -94,25 +102,18 @@ export function useExamBatchAccess() {
     enrollmentStatus,
     canAccessDashboard,
     studentId,
-    isLoading:
-      sessionsQuery.isLoading ||
-      enrollmentsQuery.isLoading ||
-      (!!sessionId && accessQuery.isLoading),
+    isLoading,
     isError:
       sessionsQuery.isError || enrollmentsQuery.isError || accessQuery.isError,
   };
 }
 
-/**
- * Nav shown BEFORE admin approval — students move page-by-page through the
- * enrollment flow (Sessions → Subjects → Verification → Pending) via in-page
- * navigation, so the sub-nav exposes only the entry point.
- */
+/** Nav shown BEFORE admin approval. */
 const preApprovalNav: SubNavItem[] = [
   { title: "Sessions", to: "/exam-batch/sessions", icon: Home },
 ];
 
-/** Nav shown AFTER admin approval — exam dashboard only. */
+/** Nav shown AFTER admin approval. */
 const postApprovalNav: SubNavItem[] = [
   { title: "Dashboard", to: "/exam-batch/dashboard", icon: LayoutDashboard },
   { title: "Available Exams", to: "/exam-batch/available", icon: ListChecks },
@@ -132,32 +133,13 @@ export function useExamBatchStudentNav(): SubNavItem[] {
 }
 
 /**
- * Redirects the student to `/exam-batch/pending` when the backend has not yet
- * approved them. Use at the top of every post-approval page component.
- * Backend is the single source of truth — no local `approved` flag.
+ * Post-approval pages call this to read the `ready` flag. It does NOT
+ * navigate — the layout at `src/routes/_student.exam-batch.tsx` is the
+ * single place that redirects. This keeps redirect logic centralized and
+ * prevents the "multiple components racing to navigate" flicker.
  */
 export function useRequireExamBatchApproval(): { ready: boolean } {
-  const navigate = useNavigate();
-  const hydrated = useHydrated();
-  const { canAccessDashboard, isLoading, sessionId } = useExamBatchAccess();
+  const { canAccessDashboard, isLoading } = useExamBatchAccess();
   const { moduleVisible, isLoading: visibilityLoading } = useExamBatchVisibility();
-
-  useEffect(() => {
-    if (!hydrated) return;
-    if (isLoading || visibilityLoading) return;
-    if (!moduleVisible) {
-      navigate({ to: "/dashboard" as never, replace: true });
-      return;
-    }
-    if (!sessionId) {
-      navigate({ to: "/exam-batch" as never });
-      return;
-    }
-    if (!canAccessDashboard) {
-      navigate({ to: "/exam-batch/pending" as never });
-    }
-  }, [hydrated, isLoading, visibilityLoading, moduleVisible, sessionId, canAccessDashboard, navigate]);
-
-  const ready = hydrated && !isLoading && !visibilityLoading && moduleVisible && canAccessDashboard;
-  return { ready };
+  return { ready: !isLoading && !visibilityLoading && moduleVisible && canAccessDashboard };
 }
